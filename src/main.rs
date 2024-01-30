@@ -1,95 +1,65 @@
-// const &str
-use chrono::{DateTime, NaiveDateTime, Utc};
-use chrono_tz::Tz;
+mod lib;
+use headless_chrome::protocol::cdp::Page;
+use headless_chrome::{Browser, LaunchOptionsBuilder};
+// use lib::parsing::measurements::{self, read_measurements, Measurement};
+// use lib::parsing::Variable;
+use fantoccini::{ClientBuilder, Locator};
+use std::error::Error;
+use tokio;
 
-#[derive(Debug)]
-struct Measurement {
-    name: String,
-    short: String,
-    value: f64,
-    variable: String,
-    datetime: DateTime<Utc>,
-}
+fn browse_wikipedia() -> Result<(), Box<dyn Error>> {
+    let browser = Browser::default()?;
 
-#[derive(Clone, Debug, Copy)]
-enum Variable {
-    Temperature,
-    Humidity,
-    Precipitation,
-}
+    let tab = browser.new_tab()?;
 
-impl Variable {
-    fn map_url(self) -> String {
-        return match self {
-            Variable::Temperature => "lufttemperatur".to_string(),
-            Variable::Humidity => "luftfeuchtigkeit".to_string(),
-            Variable::Precipitation => "niederschlag".to_string(),
-        };
-    }
+    /// Navigate to wikipedia
+    tab.navigate_to("https://www.wikipedia.org")?;
 
-    fn name(self) -> String {
-        return match self {
-            Variable::Temperature => "temperature".to_string(),
-            Variable::Humidity => "humidity".to_string(),
-            Variable::Precipitation => "precipitations".to_string(),
-        };
-    }
-}
+    /// Wait for network/javascript/dom to make the search-box available
+    /// and click it.
+    tab.wait_for_element("input#searchInput")?.click()?;
 
-const TIMEZONE: &str = "Europe/Zurich";
-const CSV_DATEIME_FMT: &str = "%Y-%m-%d %H:%M";
-// const MEASUREMENT_FMT_STR: &str = ;
+    /// Type in a query and press `Enter`
+    tab.type_str("WebKit")?.press_key("Enter")?;
 
-fn read_measurements(var: Variable) -> Vec<Measurement> {
-    let tz: Tz = TIMEZONE.parse().unwrap();
+    /// We should end up on the WebKit-page once navigated
+    let elem = tab.wait_for_element("#firstHeading")?;
+    assert!(tab.get_url().ends_with("WebKit"));
 
-    let response =
-        reqwest::blocking::get(format!("https://data.geo.admin.ch/ch.meteoschweiz.messwerte-{}-10min/ch.meteoschweiz.messwerte-{}-10min_en.csv", var.map_url(), var.map_url()));
+    /// Take a screenshot of the entire browser window
+    let _jpeg_data =
+        tab.capture_screenshot(Page::CaptureScreenshotFormatOption::Jpeg, None, None, true)?;
 
-    let meteo_raw_csv = response.unwrap().text().unwrap();
+    /// Take a screenshot of just the WebKit-Infobox
+    let _png_data = tab
+        .wait_for_element("#mw-content-text > div > table.infobox.vevent")?
+        .capture_screenshot(Page::CaptureScreenshotFormatOption::Png)?;
 
-    // define the reader for meteosuisse CSVs.
-    let mut reader = csv::ReaderBuilder::new()
-        .delimiter(b';')
-        .from_reader(meteo_raw_csv.as_bytes());
+    // Run JavaScript in the page
+    let remote_object = elem.call_js_fn(
+        r#"
+        function getIdTwice () {
+            // `this` is always the element that you called `call_js_fn` on
+            const id = this.id;
+            return id + id;
+        }
+    "#,
+        vec![],
+        false,
+    )?;
+    match remote_object.value {
+        Some(returned_string) => {
+            dbg!(&returned_string);
+            assert_eq!(returned_string, "firstHeadingfirstHeading".to_string());
+        }
+        _ => unreachable!(),
+    };
 
-    let mut measurements: Vec<Measurement> = Vec::new();
-
-    for row in reader.records() {
-        let record = match row {
-            // results are automatically extracted
-            Ok(_record) => _record,
-            // at the first error the cycle is terminated
-            Err(_error) => {
-                break;
-            }
-        };
-
-        let measurement = Measurement {
-            name: record.get(0).unwrap().to_string(),
-            short: record.get(1).unwrap().to_string(),
-            value: record
-                .get(3)
-                .unwrap()
-                .parse::<f64>()
-                .expect("string format not compatible to float64"),
-            variable: var.name(),
-            datetime: NaiveDateTime::parse_from_str(record.get(4).unwrap(), CSV_DATEIME_FMT)
-                .unwrap()
-                .and_local_timezone(tz)
-                .unwrap()
-                .to_utc(),
-        };
-
-        // println!("{:?}", measurement);
-        measurements.push(measurement);
-    }
-
-    return measurements;
+    Ok(())
 }
 
 fn main() {
-    let measurements = read_measurements(Variable::Humidity);
-    // println!("{meteo_raw_csv}")
-    println!("{:?}", measurements);
+    browse_wikipedia();
+
+    // "https://www.meteoschweiz.admin.ch/lokalprognose/allschwil/4123.html#forecast-tab=detail-view"
 }
