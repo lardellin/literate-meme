@@ -1,0 +1,14 @@
+[package]
+name = "literate-meme"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = "0.4.33"
+chrono-tz = "0.8.5"
+csv = "1.3.0"
+fantoccini = "0.19.3"
+reqwest = { version = "0.11.23", features = ["blocking"] }
+tokio = { version = "1", features = ["full"] }
